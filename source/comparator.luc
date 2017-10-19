@@ -1,4 +1,4 @@
-// an 8-bit compare unit that generates one of teo constants ("0" or "1")
+// an 8-bit compare unit that generates one of two constants ("0" or "1")
 // depending on the ALUFN control signals and the Z, V and N outputs of the adder/subtractor unit
 
 // the Beta instruction set includes three compare instructions (CMPEQ, CMPLT, CMPLE) that compare the "A" and "B" operands
