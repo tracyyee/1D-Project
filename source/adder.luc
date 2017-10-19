@@ -52,7 +52,7 @@ module adder (
     // V = (XA[7] AND XB[7] AND (NOT S[7])) OR ((NOT XA[7]) AND (NOT XB[7]) AND S[7]))
     v = (a[7] & xb[7] & ~sum_sig[7]) | (~a[7] & ~xb[7] & sum_sig[7]); // if overflow, v = 1; if no overflow, v = 0
     
-    // output N (true when the S is negative, i.e. S31 = 1)
+    // output N (true when S is negative, i.e. S7 = 1)
     n = sum_sig[7]; // if Sum is negative, n = 1; if Sum is positive, n = 0
   }
 }
