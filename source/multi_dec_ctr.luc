@@ -1,0 +1,26 @@
+// from IO Shield Tutorial
+
+// display counter that counts in base 10
+
+module multi_dec_ctr #( // multi-digit counter (chains DIGITS decimal_counters)
+    DIGITS = 4 : DIGITS >= 2  // number of digits
+  ) (
+    input clk,                // clock
+    input rst,                // reset
+    input inc,                // increment counter
+    output digits[DIGITS][4]  // digit values
+  ) {
+ 
+  .clk(clk), .rst(rst) {
+    decimal_counter dctr [DIGITS]; // digit counters
+  }
+ 
+  always {
+    dctr.inc[0] = inc;   // increment the first digit (first counter doesn't have a previous counter's ovf signal)
+    digits = dctr.value; // output the values
+ 
+    // if the previous digit overflows, increment the next
+    // each counter's inc signal is connected to the previous counter's ovf signal
+    dctr.inc[1+:DIGITS-1] = dctr.ovf[0+:DIGITS-1];
+  }
+}

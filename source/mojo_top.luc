@@ -1,0 +1,1476 @@
+module mojo_top (
+    input clk,              // 50MHz clock
+    input rst_n,            // reset button (active low)
+    output led [8],         // 8 user controllable LEDs
+    input cclk,             // configuration clock, AVR ready when high
+    output spi_miso,        // AVR SPI MISO
+    input spi_ss,           // AVR SPI Slave Select
+    input spi_mosi,         // AVR SPI MOSI
+    input spi_sck,          // AVR SPI Clock
+    output spi_channel [4], // AVR general purpose pins (used by default to select ADC channel)
+    input avr_tx,           // AVR TX (FPGA RX)
+    output avr_rx,          // AVR RX (FPGA TX)
+    input avr_rx_busy,      // AVR RX buffer full
+    output io_led [3][8],   // LEDs on IO Shield
+    output io_seg [8],      // 7-segment LEDs on IO Shield
+    output io_sel [4],      // Digit select on IO Shield
+    input io_button [5],    // 5 buttons on IO Shield
+    input io_dip [3][8]     // DIP switches on IO Shield
+  ) {
+  
+  sig rst;                  // reset signal
+  
+  .clk(clk) {
+    // The reset conditioner is used to synchronize the reset signal to the FPGA
+    // clock. This ensures the entire FPGA comes out of reset at the same time.
+    reset_conditioner reset_cond;
+    
+    .rst(rst) {
+      dff counter[30]; // counter to cycle through different states, number represents time spent in each state
+      
+      // define fsm states (for testing)
+      fsm state = {NO_TEST, ADDER_TEST1, ADDER_TEST2, ADDER_TEST3, ADDER_TEST4, ADDER_TEST5, ADDER_TEST6, ADDER_TEST7,
+                   ADDER_TEST8, ADDER_TEST9, ADDER_TEST10, ADDER_TEST11, ADDER_TEST12, ADDER_TEST13, ADDER_TESTERR, ADDER_ERR,
+                   BOOLE_TEST1, BOOLE_TEST2, BOOLE_TEST3, BOOLE_TEST4, BOOLE_TEST5, BOOLE_TEST6, BOOLE_TEST7, BOOLE_TEST8, BOOLE_TEST9, BOOLE_TEST10,
+                   BOOLE_TEST11, BOOLE_TEST12, BOOLE_TEST13, BOOLE_TEST14, BOOLE_TEST15, BOOLE_TEST16, BOOLE_TEST17, BOOLE_TEST18, BOOLE_TEST19, BOOLE_TEST20, BOOLE_TESTERR, BOOLE_ERR,
+                   SHIFT_TEST1, SHIFT_TEST2, SHIFT_TEST3, SHIFT_TEST4, SHIFT_TEST5, SHIFT_TEST6,
+                   SHIFT_TEST7, SHIFT_TEST8, SHIFT_TEST9, SHIFT_TEST10, SHIFT_TEST11, SHIFT_TEST12,
+                   SHIFT_TEST13, SHIFT_TEST14, SHIFT_TEST15, SHIFT_TEST16, SHIFT_TEST17, SHIFT_TEST18, SHIFT_TESTERR, SHIFT_ERR,
+                   CMP_TEST1, CMP_TEST2, CMP_TEST3, CMP_TEST4, CMP_TEST5, CMP_TEST6,
+                   CMP_TEST7, CMP_TEST8, CMP_TEST9, CMP_TEST10, CMP_TEST11, CMP_TEST12, CMP_TESTERR, CMP_ERR, END};
+      
+      multi_seven_seg seg; // instantiate multi_seven_seg for display
+    }
+  }
+  
+  const T = 29; // constant to control time interval before transitioning to the next state (adjust accordingly)
+  
+  alu alu8; // instantiate the ALU module
+  
+  always {
+    reset_cond.in = ~rst_n; // input raw inverted reset signal
+    rst = reset_cond.out;   // conditioned reset
+    
+    //led = 8h00;             // turn LEDs off
+    spi_miso = bz;          // not using SPI
+    spi_channel = bzzzz;    // not using flags
+    avr_rx = bz;            // not using serial port
+    
+    //io_led = 3x{{8h00}};    // turn LEDs off
+    io_seg = ~seg.seg;          // turn segments off
+    io_sel = ~seg.sel;           // select no digits
+    
+    // assigning inputs and outputs of ALU to IO Shield and Mojo    
+    alu8.alufn = io_dip[2][5:0]; // left-most row of 8 LEDs; 6-bit ALUFN input
+    alu8.a = io_dip[1];          // middle row of 8 LEDs; 8-bit input A
+    alu8.b = io_dip[0];          // right-most row of 8 LEDs; 8-bit input B
+    
+    io_led = io_dip;             // show input_ALUFN, input_A and input_B on LEDs of IO Shield
+    
+    led = alu8.alu;              // output to 8 LEDs of Mojo
+    
+    seg.values = {4d15, 4d15, 4d15, 4d15}; // initialize the values for seven_seg
+    
+    // Test Cases using FSM (self-test circuit)
+    // shows all the functionality of the ALU (including additional useful functionality)
+    // the test-circuit can demo cases of errors and indicate the kind of errors:
+    //   i.e. AErr for Adder Error, BErr for Boole Error, SErr for Shift Error, CErr for Compare Error
+    
+    case(state.q){
+      
+      // Initial state
+      state.NO_TEST:
+        counter.d = 0; // set counter to 0
+        seg.values = 4x{{4d15}}; // no display
+        
+        if (io_button[1] == 1) { // press the center button to start fsm (automatic testing starts)
+          state.d = state.ADDER_TEST1;
+        }
+      
+      // Adder Test 1: 6 + 5 == 11 
+      state.ADDER_TEST1:
+        alu8.alufn = 6b0; // addition
+        io_led[2] = 6b0; // left-most LEDs should display 0
+        alu8.a = 8b110; // 6
+        io_led[1] = 8b110; // middle 8 LEDs should display 6
+        alu8.b = 8b101; // 5
+        io_led[0] = 8b101; // rightmost 8 LEDs should display 5
+        led = alu8.alu;
+        counter.d = counter.q + 1; //increment clock counter 
+        seg.values = {4d10, 4d1, 4d15, 4d15}; // display "A1"
+        if (counter.q[T] == 1 && alu8.alu == 8b1011) { // should be 11
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_TEST2; //move to the next state
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b1011) {
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_ERR; //move to error state
+        }
+      
+      // Adder Test 2: 6 + (-5) == 1        
+      state.ADDER_TEST2:
+        alu8.alufn = 6b0; // addition
+        io_led[2] = 6b0; // left-most LEDs should display 0
+        alu8.a = 8b110; // 6
+        io_led[1] = 8b110; // middle 8 LEDs should display 6
+        alu8.b = 8b11111011; // -5
+        io_led[0] = 8b11111011; // rightmost 8 LEDs should display -5
+        led = alu8.alu;
+        counter.d = counter.q + 1; //increment clock counter 
+        seg.values = {4d10, 4d2, 4d15, 4d15}; // display "A2"
+        if (counter.q[T] == 1 && alu8.alu == 8b1) { // should be 1
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_TEST3; // move to the next state
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b1) {
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_ERR; // move to error state
+        }
+      
+      // Adder Test 3: (-6) + (-5) == -11
+      state.ADDER_TEST3:
+        alu8.alufn = 6b0; // addition
+        io_led[2] = 6b0; // left-most LEDs should display 0
+        alu8.a = 8b11111010; // -6
+        io_led[1] = 8b11111010; // middle 8 LEDs should display -6
+        alu8.b = 8b11111011; // -5
+        io_led[0] = 8b11111011; // rightmost 8 LEDs should display -5
+        led = alu8.alu;
+        counter.d = counter.q + 1; //increment clock counter 
+        seg.values = {4d10, 4d3, 4d15, 4d15}; // display "A3"
+        if (counter.q[T] == 1 && alu8.alu == 8b11110101) { // should be -11
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_TEST4; // move to the next state
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b11110101) {
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_ERR; // move to error state
+        }
+      
+      // Adder Test 4: 24 - 16 == 8
+      state.ADDER_TEST4:
+        alu8.alufn = 6b1; // subtraction
+        io_led[2] = 6b1; // left-most LEDs should display 1
+        alu8.a = 8b00011000; // 24
+        io_led[1] = 8b00011000; // middle 8 LEDs should display 24
+        alu8.b = 8b00010000; // 16
+        io_led[0] = 8b00010000; // rightmost 8 LEDs should display 16
+        led = alu8.alu;
+        counter.d = counter.q + 1; //increment clock counter 
+        seg.values = {4d10, 4d4, 4d15, 4d15}; // display "A4"
+        if (counter.q[T] == 1 && alu8.alu == 8b00001000) { // should be 8
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_TEST5; // move to the next state
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b00001000) {
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_ERR; // move to error state
+        }
+      
+      // Adder Test 5: 24 - (-16) == 40
+      state.ADDER_TEST5:
+        alu8.alufn = 6b1; // subtraction
+        io_led[2] = 6b1; // left-most LEDs should display 1
+        alu8.a = 8b00011000; // 24
+        io_led[1] = 8b00011000; // middle 8 LEDs should display 24
+        alu8.b = 8b11110000; // -16
+        io_led[0] = 8b11110000; // rightmost 8 LEDs should display -16
+        led = alu8.alu;
+        counter.d = counter.q + 1; //increment clock counter 
+        seg.values = {4d10, 4d5, 4d15, 4d15}; // display "A5"
+        if (counter.q[T] == 1 && alu8.alu == 8b00101000) { // should be 40
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_TEST6; // move to the next state
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b00101000) {
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_ERR; // move to error state
+        }
+        
+      // Adder Test 6: (-24) - (-16) == -8
+      state.ADDER_TEST6:
+        alu8.alufn = 6b1; // subtraction
+        io_led[2] = 6b1; // left-most LEDs should display 6b1
+        alu8.a = 8b11101000; // -24
+        io_led[1] = 8b11101000; // middle 8 LEDs should display -24
+        alu8.b = 8b11110000; // -16
+        io_led[0] = 8b11110000; // rightmost 8 LEDs should display -16
+        led = alu8.alu;
+        counter.d = counter.q + 1; //increment clock counter 
+        seg.values = {4d10, 4d6, 4d15, 4d15}; // display "A6"
+        if (counter.q[T] == 1 && alu8.alu == 8b11111000) { // should be -8
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_TEST7; // move to the next state
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b11111000) {
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_ERR; // move to error state
+        }
+        
+      // Adder Test 7: 2 * 3 == 6;
+      state.ADDER_TEST7:
+        alu8.alufn = 6b10; // multiplication
+        io_led[2] = 6b10; // left-most LEDs should display 6b10
+        alu8.a = 8b10; // 2
+        io_led[1] = 8b10; // middle 8 LEDs should display 2
+        alu8.b = 8b11; // 3
+        io_led[0] = 8b11; // rightmost 8 LEDs should display 3
+        led = alu8.alu;
+        counter.d = counter.q + 1; //increment clock counter 
+        seg.values = {4d10, 4d7, 4d15, 4d15}; // display "A7"
+        if (counter.q[T] == 1 && alu8.alu == 8b110) { // should be 6
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_TEST8; // move to the next state
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b110) {
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_ERR; // move to error state
+        }
+      
+      // Adder Test 8: 6 + 0 == 6 
+      state.ADDER_TEST8:
+        alu8.alufn = 6b0; // addition
+        io_led[2] = 6b0; // left-most LEDs should display 0
+        alu8.a = 8b110; // 6
+        io_led[1] = 8b110; // middle 8 LEDs should display 6
+        alu8.b = 8b0; // 0
+        io_led[0] = 8b0; // rightmost 8 LEDs should display 0
+        led = alu8.alu;
+        counter.d = counter.q + 1; //increment clock counter 
+        seg.values = {4d10, 4d8, 4d15, 4d15}; // display "A8"
+        if (counter.q[T] == 1 && alu8.alu == 8b110) { // should be 6
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_TEST9; //move to the next state
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b110) {
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_ERR; //move to error state
+        }
+      
+      // Adder Test 9: 6 - 0 == 6        
+      state.ADDER_TEST9:
+        alu8.alufn = 6b1; // subtraction
+        io_led[2] = 6b1; // left-most LEDs should display 1
+        alu8.a = 8b110; // 6
+        io_led[1] = 8b110; // middle 8 LEDs should display 6
+        alu8.b = 8b0; // 0
+        io_led[0] = 8b0; // rightmost 8 LEDs should display 0
+        led = alu8.alu;
+        counter.d = counter.q + 1; //increment clock counter 
+        seg.values = {4d10, 4d9, 4d15, 4d15}; // display "A9"
+        if (counter.q[T] == 1 && alu8.alu == 8b110) { // should be 6
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_TEST10; // move to the next state
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b110) {
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_ERR; // move to error state
+        }
+      
+      // Adder Test 10: 6 * 0 = 0
+      state.ADDER_TEST10:
+        alu8.alufn = 6b10; // multiplication
+        io_led[2] = 6b10; // left-most LEDs should display 6b10
+        alu8.a = 8b110; // 6
+        io_led[1] = 8b110; // middle 8 LEDs should display 6
+        alu8.b = 8b0; // 0
+        io_led[0] = 8b0; // rightmost 8 LEDs should display 0
+        led = alu8.alu;
+        counter.d = counter.q + 1; //increment clock counter 
+        seg.values = {4d10, 4d1, 4d0, 4d15}; // display "A10"
+        if (counter.q[T] == 1 && alu8.alu == 8b0) { // should be 0
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_TEST11; // move to the next state
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b0) {
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_ERR; // move to error state
+        }
+      
+      // Adder Test 11: 6 + 1 == 7 
+      state.ADDER_TEST11:
+        alu8.alufn = 6b0; // addition
+        io_led[2] = 6b0; // left-most LEDs should display 0
+        alu8.a = 8b110; // 6
+        io_led[1] = 8b110; // middle 8 LEDs should display 6
+        alu8.b = 8b1; // 1
+        io_led[0] = 8b1; // rightmost 8 LEDs should display 1
+        led = alu8.alu;
+        counter.d = counter.q + 1; //increment clock counter 
+        seg.values = {4d10, 4d1, 4d1, 4d15}; // display "A11"
+        if (counter.q[T] == 1 && alu8.alu == 8b111) { // should be 7
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_TEST12; //move to the next state
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b111) {
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_ERR; //move to error state
+        }
+      
+      // Adder Test 12: 6 - 1 == 5        
+      state.ADDER_TEST12:
+        alu8.alufn = 6b1; // subtraction
+        io_led[2] = 6b1; // left-most LEDs should display 1
+        alu8.a = 8b110; // 6
+        io_led[1] = 8b110; // middle 8 LEDs should display 6
+        alu8.b = 8b1; // 1
+        io_led[0] = 8b1; // rightmost 8 LEDs should display 1
+        led = alu8.alu;
+        counter.d = counter.q + 1; //increment clock counter 
+        seg.values = {4d10, 4d1, 4d2, 4d15}; // display "A12"
+        if (counter.q[T] == 1 && alu8.alu == 8b101) { // should be 5
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_TEST13; // move to the next state
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b101) {
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_ERR; // move to error state
+        }
+      
+      // Adder Test 13: 6 * 1 = 6
+      state.ADDER_TEST13:
+        alu8.alufn = 6b10; // multiplication
+        io_led[2] = 6b10; // left-most LEDs should display 6b10
+        alu8.a = 8b110; // 6
+        io_led[1] = 8b110; // middle 8 LEDs should display 6
+        alu8.b = 8b1; // 1
+        io_led[0] = 8b1; // rightmost 8 LEDs should display 1
+        led = alu8.alu;
+        counter.d = counter.q + 1; //increment clock counter 
+        seg.values = {4d10, 4d1, 4d3, 4d15}; // display "A13"
+        if (counter.q[T] == 1 && alu8.alu == 8b110) { // should be 6
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_TESTERR; // move to the next state
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b110) {
+          counter.d = 0; // reset counter
+          state.d = state.ADDER_ERR; // move to error state
+        }
+      
+      // Adder Test 14: 5 + 6 == 11 (6 becomes 7 by mistake)
+      state.ADDER_TESTERR:
+        alu8.alufn = 6b0;
+        io_led[2] = 6b0; // left-most LEDs should display 0
+        alu8.a = 8b101; // 5
+        io_led[1] = 8b101; // middle 8 LEDs should display 5
+        alu8.b = 8b110 + 8b1; // 7 (intentional error)
+        io_led[0] = 8b110; // rightmost 8 LEDs should display 6
+        led = alu8.alu;
+        counter.d = counter.q + 1;
+        seg.values = {4d10, 4d1, 4d4, 4d15}; // display "A14"
+        if (counter.q[T]==1 && alu8.alu == 8b00001011) { // should be 11
+          counter.d = 0;
+          state.d = state.BOOLE_TEST1;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b00001011){
+          counter.d = 0;
+          state.d = state.ADDER_ERR;
+        }           
+            
+      // Adder ERROR
+      state.ADDER_ERR:
+        counter.d = counter.q + 1;
+        seg.values = {4d10, 4d13, 4d14, 4d14}; // display "AErr"
+        if (counter.q[T] == 1) {
+          counter.d = 0;
+          state.d = state.BOOLE_TEST1;
+          }
+      
+      // Boolean Test 1 - AND: 8b10011010 & 8b11001001 = 8b10001000
+      state.BOOLE_TEST1:
+        alu8.alufn = 6b11000;   // AND
+        io_led[2] = 6b11000;
+        alu8.a = 8b10011010;    // 8b10011010
+        io_led[1] = 8b10011010;
+        alu8.b = 8b11001001;    // 8b11001001
+        io_led[0] = 8b11001001;
+        led = alu8.alu; 
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d1, 4d15, 4d15}; // display "B1"
+        if (counter.q[T] == 1 && alu8.alu == 8b10001000) { // supposed to be 8b10001000
+          counter.d = 0;
+          state.d = state.BOOLE_TEST2;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b10001000) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 2 - OR: 8b10000100 | 8b11000101 == 8b11000101
+      state.BOOLE_TEST2:
+        alu8.alufn = 6b11110;    // OR
+        io_led[2] = 6b11110;
+        alu8.a = 8b10000100;     // 8b10000100
+        io_led[1] = 8b10000100;
+        alu8.b = 8b11000101;     // 8b11000101
+        io_led[0] = 8b11000101;
+        led = alu8.alu;
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d2, 4d15, 4d15}; // display "B2"
+        if (counter.q[T] == 1 && alu8.alu == 8b11000101) { // supposed to be 8b11000101
+          counter.d = 0;
+          state.d = state.BOOLE_TEST3;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b11000101) { // error
+          counter.d=0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 3 - XOR: 8b11010101 ^ 8b10010011 = 8b01000110
+      state.BOOLE_TEST3:
+        alu8.alufn = 6b10110;    // XOR
+        io_led[2] = 6b11110;
+        alu8.a = 8b11010101;     // 8b11010101
+        io_led[1] = 8b11010101; 
+        alu8.b = 8b10010011;     // 8b10010011
+        io_led[0] = 8b10010011;
+        led = alu8.alu;
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d3, 4d15, 4d15}; // display "B3"
+        if (counter.q[T] == 1 && alu8.alu == 8b01000110) { // supposed to be 8b01000110
+          counter.d = 0;
+          state.d = state.BOOLE_TEST4;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b10001000) { // error
+          counter.d=0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 4 - A
+      state.BOOLE_TEST4:
+        alu8.alufn = 6b11010;    // LDR
+        io_led[2] = 6b11110;
+        alu8.a = 8b00011111;     // 8b00011111
+        io_led[1] = 8b00011111; 
+        alu8.b = 8b11111100;     // 8b11111100
+        io_led[0] = 8b11111100;
+        led = alu8.alu;
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d4, 4d15, 4d15}; // display "B4"
+        if (counter.q[T] == 1 && alu8.alu == 8b00011111) { // supposed to be 8b00011111
+          counter.d = 0;
+          state.d = state.BOOLE_TEST5;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b10001000) { // error
+          counter.d=0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 5 - AND: 8b11111111 & 8b0 = 8b0
+      state.BOOLE_TEST5:
+        alu8.alufn = 6b11000;   // AND
+        io_led[2] = 6b11000;
+        alu8.a = 8b11111111;    // 8b11111111
+        io_led[1] = 8b11111111;
+        alu8.b = 8b0;           // 8b0
+        io_led[0] = 8b0;
+        led = alu8.alu; 
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d5, 4d15, 4d15}; // display "B5"
+        if (counter.q[T] == 1 && alu8.alu == 8b0) { // supposed to be 8b0
+          counter.d = 0;
+          state.d = state.BOOLE_TEST6;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b0) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 6 - OR: 8b11111111 & 8b0 = 8b11111111
+      state.BOOLE_TEST6:
+        alu8.alufn = 6b11110;   // OR
+        io_led[2] = 6b11110;
+        alu8.a = 8b11111111;    // 8b11111111
+        io_led[1] = 8b11111111;
+        alu8.b = 8b0;           // 8b0
+        io_led[0] = 8b0;
+        led = alu8.alu; 
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d6, 4d15, 4d15}; // display "B6"
+        if (counter.q[T] == 1 && alu8.alu == 8b11111111) { // supposed to be 8b11111111
+          counter.d = 0;
+          state.d = state.BOOLE_TEST7;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b11111111) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 7 - XOR: 8b11111111 & 8b0 = 8b11111111
+      state.BOOLE_TEST7:
+        alu8.alufn = 6b10110;   // XOR
+        io_led[2] = 6b10110;
+        alu8.a = 8b11111111;    // 8b11111111
+        io_led[1] = 8b11111111;
+        alu8.b = 8b0;           // 8b0
+        io_led[0] = 8b0;
+        led = alu8.alu; 
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d7, 4d15, 4d15}; // display "B7"
+        if (counter.q[T] == 1 && alu8.alu == 8b11111111) { // supposed to be 8b11111111
+          counter.d = 0;
+          state.d = state.BOOLE_TEST8;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b11111111) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 8 - A
+      state.BOOLE_TEST8:
+        alu8.alufn = 6b11010;   // LDR
+        io_led[2] = 6b11010;
+        alu8.a = 8b11111111;    // 8b11111111
+        io_led[1] = 8b11111111;
+        alu8.b = 8b0;           // 8b0
+        io_led[0] = 8b0;
+        led = alu8.alu; 
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d8, 4d15, 4d15}; // display "B8"
+        if (counter.q[T] == 1 && alu8.alu == 8b11111111) { // supposed to be 8b11111111
+          counter.d = 0;
+          state.d = state.BOOLE_TEST9;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b11111111) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 9 - AND: 8b0 & 8b0 = 8b0
+      state.BOOLE_TEST9:
+        alu8.alufn = 6b11000;   // AND
+        io_led[2] = 6b11000;
+        alu8.a = 8b0;           // 8b0
+        io_led[1] = 8b0;
+        alu8.b = 8b0;           // 8b0
+        io_led[0] = 8b0;
+        led = alu8.alu; 
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d9, 4d15, 4d15}; // display "B9"
+        if (counter.q[T] == 1 && alu8.alu == 8b0) { // supposed to be 8b0
+          counter.d = 0;
+          state.d = state.BOOLE_TEST10;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b0) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 10 - OR: 8b0 & 8b0 = 8b0
+      state.BOOLE_TEST10:
+        alu8.alufn = 6b11110;   // OR
+        io_led[2] = 6b11110;
+        alu8.a = 8b0;           // 8b0
+        io_led[1] = 8b0;
+        alu8.b = 8b0;           // 8b0
+        io_led[0] = 8b0;
+        led = alu8.alu; 
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d1, 4d0, 4d15}; // display "B10"
+        if (counter.q[T] == 1 && alu8.alu == 8b0) { // supposed to be 8b0
+          counter.d = 0;
+          state.d = state.BOOLE_TEST11;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b0) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 11 - XOR: 8b0 & 8b0 = 8b0
+      state.BOOLE_TEST11:
+        alu8.alufn = 6b10110;   // XOR
+        io_led[2] = 6b10110;
+        alu8.a = 8b0;           // 8b0
+        io_led[1] = 8b0;
+        alu8.b = 8b0;           // 8b0
+        io_led[0] = 8b0;
+        led = alu8.alu; 
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d1, 4d1, 4d15}; // display "B11"
+        if (counter.q[T] == 1 && alu8.alu == 8b0) { // supposed to be 8b0
+          counter.d = 0;
+          state.d = state.BOOLE_TEST12;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b0) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 12 - A
+      state.BOOLE_TEST12:
+        alu8.alufn = 6b11010;   // LDR
+        io_led[2] = 6b11010;
+        alu8.a = 8b0;           // 8b0
+        io_led[1] = 8b0;
+        alu8.b = 8b0;           // 8b0
+        io_led[0] = 8b0;
+        led = alu8.alu; 
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d1, 4d2, 4d15}; // display "B12"
+        if (counter.q[T] == 1 && alu8.alu == 8b0) { // supposed to be 8b0
+          counter.d = 0;
+          state.d = state.BOOLE_TEST13;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b0) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        } 
+              
+      // Boolean Test 13 - AND: 8b11111111 & 8b11111111 = 8b11111111
+      state.BOOLE_TEST13:
+        alu8.alufn = 6b11000;   // AND
+        io_led[2] = 6b11000;
+        alu8.a = 8b11111111;    // 8b11111111
+        io_led[1] = 8b11111111;
+        alu8.b = 8b11111111;    // 8b11111111
+        io_led[0] = 8b11111111;
+        led = alu8.alu; 
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d1, 4d3, 4d15}; // display "B13"
+        if (counter.q[T] == 1 && alu8.alu == 8b11111111) { // supposed to be 8b11111111
+          counter.d = 0;
+          state.d = state.BOOLE_TEST14;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b11111111) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 14 - OR: 8b11111111 & 8b11111111 = 8b11111111
+      state.BOOLE_TEST14:
+        alu8.alufn = 6b11110;   // OR
+        io_led[2] = 6b11110;
+        alu8.a = 8b11111111;    // 8b11111111
+        io_led[1] = 8b11111111;
+        alu8.b = 8b11111111;    // 8b11111111
+        io_led[0] = 8b11111111;
+        led = alu8.alu; 
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d1, 4d4, 4d15}; // display "B14"
+        if (counter.q[T] == 1 && alu8.alu == 8b11111111) { // supposed to be 8b11111111
+          counter.d = 0;
+          state.d = state.BOOLE_TEST15;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b11111111) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 15 - XOR: 8b11111111 & 8b11111111 = 8b0
+      state.BOOLE_TEST15:
+        alu8.alufn = 6b10110;   // XOR
+        io_led[2] = 6b10110;
+        alu8.a = 8b11111111;    // 8b11111111
+        io_led[1] = 8b11111111;
+        alu8.b = 8b11111111;    // 8b11111111
+        io_led[0] = 8b11111111;
+        led = alu8.alu; 
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d1, 4d5, 4d15}; // display "B15"
+        if (counter.q[T] == 1 && alu8.alu == 8b0) { // supposed to be 8b0
+          counter.d = 0;
+          state.d = state.BOOLE_TEST16;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b0) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 16 - A
+      state.BOOLE_TEST16:
+        alu8.alufn = 6b11010;   // LDR
+        io_led[2] = 6b11010;
+        alu8.a = 8b11111111;    // 8b11111111
+        io_led[1] = 8b11111111;
+        alu8.b = 8b11111111;    // 8b11111111
+        io_led[0] = 8b11111111;
+        led = alu8.alu; 
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d1, 4d6, 4d15}; // display "B16"
+        if (counter.q[T] == 1 && alu8.alu == 8b11111111) { // supposed to be 8b11111111
+          counter.d = 0;
+          state.d = state.BOOLE_TEST17;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b11111111) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        } 
+      
+      // Boolean Test 17 - NAND: NOT(8b10011010 & 8b11001001) = 8b01110111
+      state.BOOLE_TEST17:
+        alu8.alufn = 6b10111;   // NAND
+        io_led[2] = 6b11000;
+        alu8.a = 8b10011010;    // 8b10011010
+        io_led[1] = 8b10011010;
+        alu8.b = 8b11001001;    // 8b11001001
+        io_led[0] = 8b11001001;
+        led = alu8.alu; 
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d1, 4d7, 4d15}; // display "B17"
+        if (counter.q[T] == 1 && alu8.alu == 8b01110111) { // supposed to be 8b01110111
+          counter.d = 0;
+          state.d = state.BOOLE_TEST18;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b01110111) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 18 - NOR: NOT(8b10000100 | 8b11000101) == 8b00111010
+      state.BOOLE_TEST18:
+        alu8.alufn = 6b10001;    // NOR
+        io_led[2] = 6b11110;
+        alu8.a = 8b10000100;     // 8b10000100
+        io_led[1] = 8b10000100;
+        alu8.b = 8b11000101;     // 8b11000101
+        io_led[0] = 8b11000101;
+        led = alu8.alu;
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d1, 4d8, 4d15}; // display "B18"
+        if (counter.q[T] == 1 && alu8.alu == 8b00111010) { // supposed to be 8b00111010
+          counter.d = 0;
+          state.d = state.BOOLE_TEST19;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b00111010) { // error
+          counter.d=0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 19 - XNOR: NOT(8b11010101 ^ 8b10010011) = 8b10111001
+      state.BOOLE_TEST19:
+        alu8.alufn = 6b11001;    // XNOR
+        io_led[2] = 6b11110;
+        alu8.a = 8b11010101;     // 8b11010101
+        io_led[1] = 8b11010101; 
+        alu8.b = 8b10010011;     // 8b10010011
+        io_led[0] = 8b10010011;
+        led = alu8.alu;
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d1, 4d9, 4d15}; // display "B19"
+        if (counter.q[T] == 1 && alu8.alu == 8b10111001) { // supposed to be 8b10111001
+          counter.d = 0;
+          state.d = state.BOOLE_TEST20;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b10111001) { // error
+          counter.d=0;
+          state.d = state.BOOLE_ERR;
+        }
+        
+      // Boolean Test 20 - NOT A
+      state.BOOLE_TEST20:
+        alu8.alufn = 6b10101;    // NOT A
+        io_led[2] = 6b11110;
+        alu8.a = 8b00011111;     // 8b00011111
+        io_led[1] = 8b00011111; 
+        alu8.b = 8b11111100;     // 8b11111100
+        io_led[0] = 8b11111100;
+        led = alu8.alu;
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d2, 4d0, 4d15}; // display "B20"
+        if (counter.q[T] == 1 && alu8.alu == 8b11100000) { // supposed to be 8b11100000
+          counter.d = 0;
+          state.d = state.BOOLE_TESTERR;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b11100000) { // error
+          counter.d=0;
+          state.d = state.BOOLE_ERR;
+        }
+             
+      // Boolean Test 21: ERROR
+      state.BOOLE_TESTERR:
+        alu8.alufn = 6b11000;    // AND
+        io_led[2] = 6b11000;
+        alu8.a = 8b10011010+8b1; // 8b10011010 (intentional mistake to 8b10011011)
+        io_led[1] = 8b10011010; 
+        alu8.b = 8b11001001;     // 8b11001001
+        io_led[0] = 8b11001001;
+        led = alu8.alu;
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d2, 4d1, 4d15}; // display "B21"
+        if (counter.q[T] == 1 && alu8.alu == 8b10001000) { // supposed to be 8b10001000
+          counter.d = 0;
+          state.d = state.SHIFT_TEST1;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b10001000) { // error
+          counter.d = 0;
+          state.d = state.BOOLE_ERR;
+        }
+          
+      // Boolean ERROR
+      state.BOOLE_ERR:
+        counter.d = counter.q + 1;
+        seg.values = {4d11, 4d13, 4d14, 4d14}; // display "BErr"
+        if (counter.q[T] == 1) {
+          counter.d = 0;
+          state.d = state.SHIFT_TEST1;
+        }
+        
+      // Shifter Test 1: SHL1
+      state.SHIFT_TEST1:
+        alu8.alufn = 6h20; // SHL
+        io_led[2] = 6h20;
+        alu8.a = 8b11;     // 3
+        io_led[1] = 8b11;
+        alu8.b = 8b0;      // 0
+        io_led[0] = 8b0;
+        led = alu8.alu;
+        counter.d = counter.q + 1;
+        seg.values = {4d5, 4d1, 4d15, 4d15}; // display "S1"
+        if (counter.q[T] == 1 && alu8.alu == 8b11) { // should be 8b11
+          counter.d = 0;
+          state.d = state.SHIFT_TEST2;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b11) { // error
+          counter.d = 0;
+          state.d = state.SHIFT_ERR;
+        }
+        
+      // Shifter Test 2: SHL2
+      state.SHIFT_TEST2:
+        alu8.alufn = 6h20; // SHL
+        io_led[2] = 6h20;
+        alu8.a = 8b11;     // 3
+        io_led[1] = 8b11;
+        alu8.b = 8b1;      // 1
+        io_led[0] = 8b1;
+        led = alu8.alu;
+        counter.d = counter.q + 1;
+        seg.values = {4d5, 4d2, 4d15, 4d15}; // display "S2"
+        if (counter.q[T] == 1 && alu8.alu == 8b110) { // should be 8b110
+          counter.d = 0;
+          state.d = state.SHIFT_TEST3;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b110) { // error
+          counter.d = 0;
+          state.d = state.SHIFT_ERR;
+        }
+        
+        // Shifter Test 3: SHL3
+        state.SHIFT_TEST3:
+          alu8.alufn = 6h20;      // SHL
+          io_led[2] = 6h20;
+          alu8.a = 8b11101010;    // -22
+          io_led[1] = 8b11101010;
+          alu8.b = 8b11;          // 3
+          io_led[0] = 8b11;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d3, 4d15, 4d15}; // display "S3"
+          if (counter.q[T] == 1 && alu8.alu == 8b01010000) { // should be 8b01010000
+            counter.d = 0;
+            state.d = state.SHIFT_TEST4;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b01010000) { // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }
+        
+        // Shifter Test 4: SHL4
+        state.SHIFT_TEST4:
+          alu8.alufn = 6h20;      // SHL
+          io_led[2] = 6h20;
+          alu8.a = 8b11101010;    //-22
+          io_led[1] = 8b11101010;
+          alu8.b = 8b101;         //5
+          io_led[0] = 8b101;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d4, 4d15, 4d15}; // display "S4"
+          if (counter.q[T] == 1 && alu8.alu == 8b01000000) { // should be 8b01000000
+            counter.d = 0;
+            state.d = state.SHIFT_TEST5;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b01000000) { // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }
+        
+        // Shifter Test 5: SHL5
+        state.SHIFT_TEST5:
+          alu8.alufn = 6h20;      // SHL
+          io_led[2] = 6h20;
+          alu8.a = 8b11101010;    // -22
+          io_led[1] = 8b11101010;
+          alu8.b = 8b111;         // 7
+          io_led[0] = 8b111;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d5, 4d15, 4d15}; // display "S5"
+          if (counter.q[T] == 1 && alu8.alu == 8b0) { // should be 8b0
+            counter.d = 0;
+            state.d = state.SHIFT_TEST6;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b0) { // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }
+      
+        // Shifter Test 6: SHL6
+        state.SHIFT_TEST6:
+          alu8.alufn = 6h20;      // SHL
+          io_led[2] = 6h20;
+          alu8.a = 8b01011011;    // 91
+          io_led[1] = 8b01011011;
+          alu8.b = 8b100;         // 4
+          io_led[0] = 8b100;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d6, 4d15, 4d15}; // display "S6"
+          if (counter.q[T] == 1 && alu8.alu == 8b10110000) { // should be 8b10110000
+            counter.d = 0;
+            state.d = state.SHIFT_TEST7;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b10110000) { // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }
+        
+        // Shifter Test 7: SHR1
+        state.SHIFT_TEST7:
+          alu8.alufn = 6h21; // SHR
+          io_led[2] = 6h21;
+          alu8.a = 8b11;     // 3
+          io_led[1] = 8b11;
+          alu8.b = 8b0;      // 0
+          io_led[0] = 8b0;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d7, 4d15, 4d15}; // display "S7"
+          if (counter.q[T] == 1 && alu8.alu == 8b11) { // should be 8b11
+            counter.d = 0;
+            state.d = state.SHIFT_TEST8;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b11) { // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }
+        
+        // Shifter Test 8: SHR2
+        state.SHIFT_TEST8:
+          alu8.alufn = 6h21; // SHR
+          io_led[2] = 6h21;
+          alu8.a = 8b11;     // 3
+          io_led[1] = 8b11;
+          alu8.b = 8b1;      // 1
+          io_led[0] = 8b1;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d8, 4d15, 4d15}; // display "S8"
+          if (counter.q[T] == 1 && alu8.alu == 8b01) { // should be 8b01
+            counter.d = 0;
+            state.d = state.SHIFT_TEST9;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b01) { // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }
+        
+        // Shifter Test 9: SHR3
+        state.SHIFT_TEST9:
+          alu8.alufn = 6h21;      // SHR
+          io_led[2] = 6h21;
+          alu8.a = 8b11101010;    //-22
+          io_led[1] = 8b11101010;
+          alu8.b = 8b11;          //3
+          io_led[0] = 8b11;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d9, 4d15, 4d15}; // display "S9"
+          if (counter.q[T] == 1 && alu8.alu == 8b11101) { // should be 8b11101
+            counter.d = 0;
+            state.d = state.SHIFT_TEST10;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b11101) { // error
+          counter.d = 0;
+          state.d = state.SHIFT_ERR;
+          }
+        
+        // Shifter Test 10: SHR4
+        state.SHIFT_TEST10:
+          alu8.alufn = 6h21;      // SHR
+          io_led[2] = 6h21;
+          alu8.a = 8b11101010;    // -22
+          io_led[1] = 8b11101010;
+          alu8.b = 8b101;         // 5
+          io_led[0] = 8b101;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d1, 4d0, 4d15}; // display "S10"
+          if (counter.q[T] == 1 && alu8.alu == 8b111) { // should be 8b111
+            counter.d = 0;
+            state.d = state.SHIFT_TEST11;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b111){ // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }
+        
+        // Shifter Test 11: SHR5
+        state.SHIFT_TEST11:
+          alu8.alufn = 6h21;      // SHR
+          io_led[2] = 6h21;
+          alu8.a = 8b11101010;    // -22
+          io_led[1] = 8b11101010;
+          alu8.b = 8b111;         // 7
+          io_led[0] = 8b111;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d1, 4d1, 4d15}; // display "S11"
+          if (counter.q[T] == 1 && alu8.alu == 8b1) { // should be 8b1
+            counter.d = 0;
+            state.d = state.SHIFT_TEST12;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b1) { // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }
+        
+        // Shifter Test 12: SHR6
+        state.SHIFT_TEST12:
+          alu8.alufn = 6h21;      // SHR
+          io_led[2] = 6h21;
+          alu8.a = 8b01011011;    //91
+          io_led[1] = 8b01011011;
+          alu8.b = 8b100;         //4
+          io_led[0] = 8b100;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d1, 4d2, 4d15}; // display "S12"
+          if (counter.q[T] == 1 && alu8.alu == 8b0101) { // should be 8b0101
+            counter.d = 0;
+            state.d = state.SHIFT_TEST13;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b0101) { // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }
+        
+        // Shifter Test 13: SRA1
+        state.SHIFT_TEST13:
+          alu8.alufn = 6h23; // SRA
+          io_led[2] = 6h23;
+          alu8.a = 8b11;     // 3
+          io_led[1] = 8b11;
+          alu8.b = 8b0;      // 0
+          io_led[0] = 8b0;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d1, 4d3, 4d15}; // display "S13"
+          if (counter.q[T] == 1 && alu8.alu == 8b11) { // should be 8b11
+            counter.d = 0;
+            state.d = state.SHIFT_TEST14;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b11) { // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }
+        
+        // Shifter Test 14: SRA2
+        state.SHIFT_TEST14:
+          alu8.alufn = 6h23; // SRA
+          io_led[2] = 6h23;
+          alu8.a = 8b11;     // 3
+          io_led[1] = 8b11;
+          alu8.b = 8b1;      // 1
+          io_led[0] = 8b1;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d1, 4d4, 4d15}; // display "S14"
+          if (counter.q[T] == 1 && alu8.alu == 8b01) { // should be 8b01
+            counter.d = 0;
+            state.d = state.SHIFT_TEST15;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b01) { // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }
+        
+        // Shifter Test 15: SRA3
+        state.SHIFT_TEST15:
+          alu8.alufn = 6h23;      // SRA
+          io_led[2] = 6h23;
+          alu8.a = 8b11101010;    // -22
+          io_led[1] = 8b11101010;
+          alu8.b = 8b11;          // 3
+          io_led[0] = 8b11;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d1, 4d5, 4d15}; // display "S15"
+          if (counter.q[T] == 1 && alu8.alu == 8b11111101) { // should be 8b11111101
+            counter.d = 0;
+            state.d = state.SHIFT_TEST16;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b11111101) { // error
+            counter.d = 0;
+              state.d = state.SHIFT_ERR;
+          }
+        
+        // Shifter Test 16: SRA4
+        state.SHIFT_TEST16:
+          alu8.alufn = 6h23;      // SRA
+          io_led[2] = 6h23;
+          alu8.a = 8b11101010;    // -22
+          io_led[1] = 8b11101010;
+          alu8.b = 8b101;         // 5
+          io_led[0] = 8b101;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d1, 4d6, 4d15}; // display "S16"
+          if (counter.q[T] == 1 && alu8.alu == 8b11111111) { // should be 8b11111111
+            counter.d = 0;
+            state.d = state.SHIFT_TEST17;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b11111111) { // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }    
+        
+        // Shifter Test 17: SRA5
+        state.SHIFT_TEST17:
+          alu8.alufn = 6h23;      // SRA
+          io_led[2] = 6h23;
+          alu8.a = 8b11101010;    // -22
+          io_led[1] = 8b11101010;
+          alu8.b = 8b111;         // 7
+          io_led[0] = 8b111;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d1, 4d7, 4d15}; // display "S17"
+          if (counter.q[T] == 1 && alu8.alu == 8b11111111) { // should be 8b11111111
+            counter.d = 0;
+            state.d = state.SHIFT_TEST18;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b11111111) { // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }
+        
+        // Shifter Test 18: SRA6
+        state.SHIFT_TEST18:
+          alu8.alufn = 6h23;      // SRA
+          io_led[2] = 6h23;
+          alu8.a = 8b01011011;    // 91
+          io_led[1] = 8b01011011;
+          alu8.b = 8b100;         // 4
+          io_led[0] = 8b100;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d1, 4d8, 4d15}; // display "S18"
+          if (counter.q[T] == 1 && alu8.alu == 8b0101) { // should be 8b0101
+            counter.d = 0;
+            state.d = state.SHIFT_TESTERR;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b0101){ // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }
+        
+        // Shifter Test 19: ERROR
+        state.SHIFT_TESTERR:
+          alu8.alufn = 6h20; // SHL
+          io_led[2] = 6h20;
+          alu8.a = 8b11;     // 3
+          io_led[1] = 8b11;
+          alu8.b = 8b0+8b1;  // 0 (intentional mistake to 1)
+          io_led[0] = 8b0;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d1, 4d9, 4d15}; // display "S19"
+          if (counter.q[T] == 1 && alu8.alu == 8b11) { // should be 8b11
+            counter.d = 0;
+            state.d = state.CMP_TEST1;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b11) { // error
+            counter.d = 0;
+            state.d = state.SHIFT_ERR;
+          }
+        
+        // Shift ERROR
+        state.SHIFT_ERR:
+          counter.d = counter.q + 1;
+          seg.values = {4d5, 4d13, 4d14, 4d14}; // display "SErr"
+          if (counter.q[T] == 1) {
+            counter.d = 0;
+            state.d = state.CMP_TEST1;
+          }
+        
+        // Comparator Test 1: CMPEQ1
+        state.CMP_TEST1:
+          alu8.alufn = 6h33; // CMPEQ
+          io_led[2] = 6h33;
+          alu8.a = 8h02;     // 2
+          io_led[1] = 8h02;
+          alu8.b = 8h03;     // 3
+          io_led[0] = 8h03;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d12, 4d1, 4d15, 4d15}; // display "C1"
+          if (counter.q[T] == 1 && alu8.alu == 8b0) { // should be 0
+            counter.d = 0;
+            state.d = state.CMP_TEST2;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b0) { // error
+            counter.d = 0;
+            state.d = state.CMP_ERR;
+          }
+        
+        // Comparator Test 2: CMPLT1
+        state.CMP_TEST2:
+          alu8.alufn = 6h35; // CMPLT
+          io_led[2] = 6h35;
+          alu8.a = 8h02;     // 2
+          io_led[1] = 8h02;
+          alu8.b = 8h03;     // 3
+          io_led[0] = 8h03;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d12, 4d2, 4d15, 4d15}; // display "C2"
+          if (counter.q[T] == 1 && alu8.alu == 8b1) { // should be 1
+            counter.d = 0;
+            state.d = state.CMP_TEST3;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b1) { // error
+            counter.d = 0;
+            state.d = state.CMP_ERR;
+          }
+        
+        // Comparator Test 3: CMPLE1
+        state.CMP_TEST3:
+          alu8.alufn = 6h37; // CMPLE
+          io_led[2] = 6h37;
+          alu8.a = 8h02;     // 2
+          io_led[1] = 8h02;
+          alu8.b = 8h03;     // 3
+          io_led[0] = 8h03;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d12, 4d3, 4d15, 4d15}; // display "C3"
+          if (counter.q[T] == 1 && alu8.alu == 8b1) { // should be 1
+            counter.d = 0;
+            state.d = state.CMP_TEST4;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b1) { // error
+            counter.d = 0;
+            state.d = state.CMP_ERR;
+          }
+        
+        // Comparator Test 4: CMPEQ2
+        state.CMP_TEST4:
+          alu8.alufn = 6h33; // CMPEQ
+          io_led[2] = 6h33;
+          alu8.a = 8h18;     // 22
+          io_led[1] = 8h18;
+          alu8.b = 8h10;     // 16
+          io_led[0] = 8h10;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d12, 4d4, 4d15, 4d15}; // display "C4"
+          if (counter.q[T] == 1 && alu8.alu == 8b0) { // should be 0
+            counter.d = 0;
+            state.d = state.CMP_TEST5;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b0) { // error
+            counter.d = 0;
+            state.d = state.CMP_ERR;
+          }
+        
+        // Comparator Test 5: CMPLT2
+        state.CMP_TEST5:
+          alu8.alufn = 6h35; // CMPLT
+          io_led[2] = 6h35;
+          alu8.a = 8h18;     // 22
+          io_led[1] = 8h18;
+          alu8.b = 8h10;     // 16
+          io_led[0] = 8h10;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d12, 4d5, 4d15, 4d15}; // display "C5"
+          if (counter.q[T] == 1 && alu8.alu == 8b0) { // should be 0
+            counter.d = 0;
+            state.d = state.CMP_TEST6;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b0) { // error
+            counter.d = 0;
+            state.d = state.CMP_ERR;
+          }
+        
+        // Comparator Test 6: CMPLE2
+        state.CMP_TEST6:
+          alu8.alufn = 6h37; // CMPLE
+          io_led[2] = 6h37;
+          alu8.a = 8h18;     // 22
+          io_led[1] = 8h18;
+          alu8.b = 8h10;     // 16
+          io_led[0] = 8h10;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d12, 4d6, 4d15, 4d15}; // display "C6"
+          if (counter.q[T] == 1 && alu8.alu == 8b0) { // should be 0
+            counter.d = 0;
+            state.d = state.CMP_TEST7;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b0) { // error
+            counter.d = 0;
+            state.d = state.CMP_ERR;
+          }
+        
+        // Comparator Test 7: CMPEQ3
+        state.CMP_TEST7:
+          alu8.alufn = 6h33;      // CMPEQ
+          io_led[2] = 6h33;
+          alu8.a = 8b10010011;    // -109
+          io_led[1] = 8b10010011;
+          alu8.b = 8b10011100;    // -100
+          io_led[0] = 8b10011100;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d12, 4d7, 4d15, 4d15}; // display "C7"
+          if (counter.q[T] == 1 && alu8.alu == 8b0) { // should be 0
+            counter.d = 0;
+            state.d = state.CMP_TEST8;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b0) { // error
+            counter.d = 0;
+            state.d = state.CMP_ERR;
+          }
+        
+        // Comparator Test 8: CMPLT3
+        state.CMP_TEST8:
+          alu8.alufn = 6h35;      // CMPLT
+          io_led[2] = 6h35;
+          alu8.a = 8b10010011;    // -109
+          io_led[1] = 8b10010011;
+          alu8.b = 8b10011100;    // -100
+          io_led[0] = 8b10011100;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d12, 4d8, 4d15, 4d15}; // display "C8"
+          if (counter.q[T] == 1 && alu8.alu == 8b1) { // should be 1
+            counter.d = 0;
+            state.d = state.CMP_TEST9;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b1) { // error
+            counter.d = 0;
+            state.d = state.CMP_ERR;
+          }
+        
+        // Comparator Test 9: CMPLE3
+        state.CMP_TEST9:
+          alu8.alufn = 6h37;      // CMPLE
+          io_led[2] = 6h37;
+          alu8.a = 8b10010011;    // -109
+          io_led[1] = 8b10010011;
+          alu8.b = 8b10011100;    // -100
+          io_led[0] = 8b10011100;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d12, 4d9, 4d15, 4d15}; // display "C9"
+          if (counter.q[T] == 1 && alu8.alu == 8b1) { // should be 1
+            counter.d = 0;
+            state.d = state.CMP_TEST10;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b1) { // error
+            counter.d = 0;
+            state.d = state.CMP_ERR;
+          }
+        
+        // Comparator Test 10: CMPEQ4
+        state.CMP_TEST10:
+          alu8.alufn = 6h33;  // CMPEQ
+          io_led[2] = 6h33;
+          alu8.a = 8h2a;      // 42
+          io_led[1] = 8h2a;
+          alu8.b = 8h2a;      // 42
+          io_led[0] = 8h2a;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d12, 4d1, 4d0, 4d15}; // display "C10"
+          if (counter.q[T] == 1 && alu8.alu == 8b1) { // should be 1
+            counter.d = 0;
+            state.d = state.CMP_TEST11;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b1) { // error
+            counter.d = 0;
+            state.d = state.CMP_ERR;
+          }
+        
+        // Comparator Test 11: CMPLT4
+        state.CMP_TEST11:
+          alu8.alufn = 6h35;  // CMPLT
+          io_led[2] = 6h35;
+          alu8.a = 8h2a;      // 42
+          io_led[1] = 8h2a;
+          alu8.b = 8h2a;      // 42
+          io_led[0] = 8h2a;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d12, 4d1, 4d1, 4d15}; // display "C11"
+          if (counter.q[T] == 1 && alu8.alu == 8b0) { // should be 0
+            counter.d = 0;
+            state.d = state.CMP_TEST12;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b0) { // error
+            counter.d = 0;
+            state.d = state.CMP_ERR;
+          }
+        
+        // Comparator Test 12: CMPLE4
+        state.CMP_TEST12:
+          alu8.alufn = 6h37;  // CMPLE
+          io_led[2] = 6h37;
+          alu8.a = 8h2a;      // 42
+          io_led[1] = 8h2a;
+          alu8.b = 8h2a;      // 42
+          io_led[0] = 8h2a;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d12, 4d1, 4d2, 4d15}; // display "C12"
+          if (counter.q[T] == 1 && alu8.alu == 8b1) { // should be 1
+            counter.d = 0;
+            state.d = state.CMP_TESTERR;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b1) { // error
+            counter.d = 0;
+            state.d = state.CMP_ERR;
+          }
+        
+        // Comparator Test 13: ERROR
+        state.CMP_TESTERR:
+          alu8.alufn = 6h33;    // CMPEQ
+          io_led[2] = 6h33;
+          alu8.a = 8h02+8h01;   // 2 (intentionally mistake to 3)
+          io_led[1] = 8h02;
+          alu8.b = 8h03;        // 3
+          io_led[0] = 8h03;
+          led = alu8.alu;
+          counter.d = counter.q + 1;
+          seg.values = {4d12, 4d1, 4d3, 4d15}; // display "C13"
+          if (counter.q[T] == 1 && alu8.alu == 8b0) { // should be 0
+            counter.d = 0;
+            state.d = state.END;
+          }
+          else if (counter.q[T] == 1 && alu8.alu != 8b0) { // error
+            counter.d = 0;
+            state.d = state.CMP_ERR;
+          }
+        
+        // Comparator ERROR
+        state.CMP_ERR:
+          counter.d = counter.q + 1;
+          seg.values = {4d12, 4d13, 4d14, 4d14}; // display "CErr"
+          if (counter.q[T] == 1) {
+            counter.d = 0;
+            state.d = state.END;
+          }
+        
+      // END state (automatic testing complete)          
+      state.END:
+        counter.d = counter.q + 1;
+        seg.values = {4d0, 4d0, 4d0, 4d0}; // display "0000"
+        if (counter.q[T] == 1) {
+          counter.d = 0;
+          state.d = state.NO_TEST; // return back to initial state (NO_TEST)
+        }
+    }
+  }
+}

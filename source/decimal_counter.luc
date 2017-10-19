@@ -1,0 +1,29 @@
+// from IO Shield Tutorial
+
+// display counter that counts in base 10
+
+module decimal_counter ( // single digit counter
+    input clk,      // clock
+    input rst,      // reset
+    input inc,      // increment the counter (signals when the value should be increased)
+    output ovf,     // counter overflowed (when the digit is about to overflow to 0, the flag ovf is set to 1)
+    output value[4] // current value of counter
+  ) {
+ 
+  .clk(clk), .rst(rst) {
+    dff val[4];     // value storage
+  }
+ 
+  always {
+    value = val.q;           // output the value
+ 
+    ovf = val.q == 9 && inc; // if max value and incrementing, overflow!
+ 
+    if (inc) {               // should add 1
+      if (val.q == 9)        // if max value
+        val.d = 0;           // reset to 0
+      else                   // otherwise
+        val.d = val.q + 1;   // add one
+    }
+  }
+}
