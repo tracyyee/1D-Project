@@ -30,7 +30,7 @@ module mojo_top (
       
       // define fsm states (for testing)
       fsm state = {NO_TEST, ADDER_TEST1, ADDER_TEST2, ADDER_TEST3, ADDER_TEST4, ADDER_TEST5, ADDER_TEST6, ADDER_TEST7,
-                   ADDER_TEST8, ADDER_TEST9, ADDER_TEST10, ADDER_TEST11, ADDER_TEST12, ADDER_TEST13, ADDER_TESTERR, ADDER_ERR,
+                   ADDER_TEST8, ADDER_TEST9, ADDER_TEST10, ADDER_TEST11, ADDER_TEST12, ADDER_TEST13, ADDER_TEST14, ADDER_TEST15, ADDER_TESTERR, ADDER_ERR,
                    BOOLE_TEST1, BOOLE_TEST2, BOOLE_TEST3, BOOLE_TEST4, BOOLE_TEST5, BOOLE_TEST6, BOOLE_TEST7, BOOLE_TEST8, BOOLE_TEST9, BOOLE_TEST10,
                    BOOLE_TEST11, BOOLE_TEST12, BOOLE_TEST13, BOOLE_TEST14, BOOLE_TEST15, BOOLE_TEST16, BOOLE_TEST17, BOOLE_TEST18, BOOLE_TEST19, BOOLE_TEST20, BOOLE_TESTERR, BOOLE_ERR,
                    SHIFT_TEST1, SHIFT_TEST2, SHIFT_TEST3, SHIFT_TEST4, SHIFT_TEST5, SHIFT_TEST6,
@@ -340,14 +340,56 @@ module mojo_top (
         seg.values = {4d10, 4d1, 4d3, 4d15}; // display "A13"
         if (counter.q[T] == 1 && alu8.alu == 8b110) { // should be 6
           counter.d = 0; // reset counter
-          state.d = state.ADDER_TESTERR; // move to the next state
+          state.d = state.ADDER_TEST14; // move to the next state
         }
         else if (counter.q[T] == 1 && alu8.alu != 8b110) {
           counter.d = 0; // reset counter
           state.d = state.ADDER_ERR; // move to error state
         }
       
-      // Adder Test 14: 5 + 6 == 11 (6 becomes 7 by mistake)
+      
+        // Adder Test 14: (-2) * (-3) = 6
+        state.ADDER_TEST14:
+        alu8.alufn = 6h2;       // multiply
+        io_led[2] = 6h2;
+        alu8.a = 8b11111110;    // -2
+        io_led[1] = 8b11111110;
+        alu8.b = 8b11111101;    // -3
+        io_led[0] = 8b11111101;
+        led = alu8.alu;
+        counter.d = counter.q + 1;
+        seg.values = {4d10, 4d1, 4d4, 4d15}; // display "A14"
+        if (counter.q[T] == 1 && alu8.alu == 8b110) { // should be 6
+          counter.d = 0;
+          state.d = state.ADDER_TEST15;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b110) { // error
+          counter.d = 0;
+          state.d = state.ADDER_ERR;
+        }
+
+        // Adder Test 15: 100 * (-100) = -16 (display)
+        state.ADDER_TEST15:
+        alu8.alufn = 6h2;      // multiply
+        io_led[2] = 6h2;
+        alu8.a = 8b01100100;    // 100
+        io_led[1] = 8b01100100;
+        alu8.b = 8b10011100;    // -100
+        io_led[0] = 8b10011100;
+        led = alu8.alu;
+        counter.d = counter.q + 1;
+        seg.values = {4d10, 4d1, 4d5, 4d15}; // display "A15"
+        if (counter.q[T] == 1 && alu8.alu == 8b11110000) { // should be -16
+          counter.d = 0;
+          state.d = state.ADDER_TESTERR;
+        }
+        else if (counter.q[T] == 1 && alu8.alu != 8b11110000){ // error
+          counter.d = 0;
+          state.d = state.ADDER_ERR;
+        }
+
+
+      // Adder Test 16: 5 + 6 == 11 (6 becomes 7 by mistake)
       state.ADDER_TESTERR:
         alu8.alufn = 6b0;
         io_led[2] = 6b0; // left-most LEDs should display 0
@@ -357,7 +399,7 @@ module mojo_top (
         io_led[0] = 8b110; // rightmost 8 LEDs should display 6
         led = alu8.alu;
         counter.d = counter.q + 1;
-        seg.values = {4d10, 4d1, 4d4, 4d15}; // display "A14"
+        seg.values = {4d10, 4d1, 4d6, 4d15}; // display "A16"
         if (counter.q[T]==1 && alu8.alu == 8b00001011) { // should be 11
           counter.d = 0;
           state.d = state.BOOLE_TEST1;
